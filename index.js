@@ -1,62 +1,30 @@
 var acornToEsprima = require("acorn-to-esprima");
 var assign         = require("lodash.assign");
 var pick           = require("lodash.pick");
-var Module         = require("module");
-var path           = require("path");
-var parse          = require("babel-core").parse;
-var t              = require("babel-core").types;
-var tt             = require("babel-core").acorn.tokTypes;
-var traverse       = require("babel-core").traverse;
+var parse          = require("babel-core/lib/api/node").parse;
+var t              = require("babel-core/lib/types");
+var tt             = require("babel-core/node_modules/babylon").tokTypes;
+var traverse       = require("babel-core/lib/traversal");
+var estraverse     = require("estraverse");
+var estraverseFb   = require("estraverse-fb");
+var escope         = require("escope");
+var referencer     = require("escope/lib/referencer");
+var Definition     = require("escope/lib/definition").Definition;
 
 var estraverse;
 var hasPatched = false;
-
-function createModule(filename) {
-  var mod = new Module(filename);
-  mod.filename = filename;
-  mod.paths = Module._nodeModulePaths(path.dirname(filename));
-  return mod;
-}
 
 function monkeypatch() {
   if (hasPatched) return;
   hasPatched = true;
 
-  var eslintLoc;
-  try {
-    // avoid importing a local copy of eslint, try to find a peer dependency
-    eslintLoc = Module._resolveFilename("eslint", module.parent);
-  } catch (err) {
-    try {
-      // avoids breaking in jest where module.parent is undefined
-      eslintLoc = require.resolve("eslint");
-    } catch (err) {
-      throw new ReferenceError("couldn't resolve eslint");
-    }
-  }
-
-  // get modules relative to what eslint will load
-  var eslintMod = createModule(eslintLoc);
-  var escopeLoc = Module._resolveFilename("escope", eslintMod);
-  var escopeMod = createModule(escopeLoc);
-
-  // npm 3: monkeypatch estraverse if it's in escope
-  var estraverseRelative = escopeMod;
-  try {
-    var esrecurseLoc = Module._resolveFilename("esrecurse", eslintMod);
-    estraverseRelative = createModule(esrecurseLoc);
-  } catch (err) {}
-
   // monkeypatch estraverse
-  estraverse = estraverseRelative.require("estraverse");
   assign(estraverse.VisitorKeys, t.VISITOR_KEYS);
 
   // monkeypatch estraverse-fb
-  var estraverseFb = eslintMod.require("estraverse-fb");
   assign(estraverseFb.VisitorKeys, t.VISITOR_KEYS);
 
   // monkeypatch escope
-  var escope  = require(escopeLoc);
   var analyze = escope.analyze;
   escope.analyze = function (ast, opts) {
     opts.ecmaVersion = 6;
@@ -64,25 +32,6 @@ function monkeypatch() {
     var results = analyze.call(this, ast, opts);
     return results;
   };
-
-  // monkeypatch escope/referencer
-  var referencerLoc;
-  try {
-    referencerLoc = Module._resolveFilename("./referencer", escopeMod);
-  } catch (err) {
-    throw new ReferenceError("couldn't resolve escope/referencer");
-  }
-  var referencerMod = createModule(referencerLoc);
-  var referencer = require(referencerLoc);
-
-  // reference Definition
-  var definitionLoc;
-  try {
-    definitionLoc = Module._resolveFilename("./definition", referencerMod);
-  } catch (err) {
-    throw new ReferenceError("couldn't resolve escope/definition");
-  }
-  var Definition = require(definitionLoc).Definition;
 
   // if there are decorators, then visit each
   function visitDecorators(node) {
